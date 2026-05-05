@@ -1,0 +1,53 @@
+name: pluggercat
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pluggercat-bot:local
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - ./.env
+    environment:
+      APP_NAME: ${APP_NAME:-pluggercat}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?set DISCORD_TOKEN in .env}
+      DISCORD_DEV_GUILD_ID: ${DISCORD_DEV_GUILD_ID:-}
+      LAVALINK_NODE_NAME: ${LAVALINK_NODE_NAME:-main}
+      LAVALINK_ADDRESS: lavalink:2333
+      LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set LAVALINK_PASSWORD in .env}
+      LAVALINK_SECURE: "false"
+    depends_on:
+      lavalink:
+        condition: service_started
+        restart: true
+    networks:
+      - backend
+
+  lavalink:
+    image: ghcr.io/lavalink-devs/lavalink:4-alpine
+    restart: unless-stopped
+    environment:
+      _JAVA_OPTIONS: -Xms512M -Xmx512M
+      SERVER_PORT: 2333
+      SERVER_ADDRESS: 0.0.0.0
+      LAVALINK_SERVER_PASSWORD: ${LAVALINK_PASSWORD:?set LAVALINK_PASSWORD in .env}
+    volumes:
+      - ./deploy/lavalink/application.yml:/opt/Lavalink/application.yml:ro
+    ports:
+      - "127.0.0.1:2333:2333"
+    expose:
+      - "2333"
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge

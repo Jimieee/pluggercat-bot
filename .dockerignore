@@ -1,0 +1,9 @@
+.git
+.gitignore
+.agents
+.codex
+.env
+.env.local
+.env.*.local
+.dockerignore
+docs

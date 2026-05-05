@@ -1,0 +1,51 @@
+# Secrets and local env files
+.env
+.env.*
+!.env.example
+!.env.*.example
+.envrc
+.direnv/
+
+# Go build artifacts
+/bin/
+/build/
+/dist/
+/tmp/
+/.tmp/
+/.cache/
+coverage/
+coverage.out
+cover.out
+coverage.html
+.coverprofile
+*.coverprofile
+*.test
+*.prof
+*.pprof
+*.out
+
+# Logs and runtime files
+*.log
+*.pid
+*.seed
+
+# Docker and local overrides
+docker-compose.override.yml
+docker-compose.override.yaml
+compose.override.yml
+compose.override.yaml
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.fleet/
+.history/
+*.swp
+*.swo
+*~
+
+# Local workspace tooling
+.codex/
+.agents/
