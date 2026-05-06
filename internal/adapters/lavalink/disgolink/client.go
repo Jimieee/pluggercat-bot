@@ -110,24 +110,37 @@ func (c *Client) OnTrackMayStartNext(handler TrackEndHandler) {
 
 // searches for tracks matching the query using the lavalink node, and returns a list of matching tracks or an error if the search fails
 func (c *Client) SearchTracks(ctx context.Context, query string) ([]domainmusic.Track, error) {
-	node, err := c.readyNode()
+	result, err := c.LoadTracks(ctx, query)
 	if err != nil {
 		return nil, err
+	}
+	return result.Tracks, nil
+}
+
+// loads tracks while preserving whether Lavalink returned a single track, search
+// results, or a playlist/album collection.
+func (c *Client) LoadTracks(ctx context.Context, query string) (domainmusic.LoadResult, error) {
+	node, err := c.readyNode()
+	if err != nil {
+		return domainmusic.LoadResult{}, err
 	}
 
 	var lastErr error
 	for _, identifier := range candidateIdentifiers(query) {
-		tracks, found, err := c.loadTracks(ctx, node, identifier)
+		result, found, err := c.loadTracks(ctx, node, identifier)
 		if err != nil {
 			lastErr = err
 			continue
 		}
 		if found {
-			return tracks, nil
+			return result, nil
 		}
 	}
 
-	return nil, lastErr
+	if lastErr != nil {
+		return domainmusic.LoadResult{}, lastErr
+	}
+	return domainmusic.LoadResult{}, nil
 }
 
 // joins the specified voice channel in the specified guild by updating the bot's voice state
@@ -275,33 +288,46 @@ func candidateIdentifiers(query string) []string {
 	}
 }
 
-func (c *Client) loadTracks(ctx context.Context, node disgolink.Node, identifier string) ([]domainmusic.Track, bool, error) {
+func (c *Client) loadTracks(ctx context.Context, node disgolink.Node, identifier string) (domainmusic.LoadResult, bool, error) {
 	result, err := node.LoadTracks(ctx, identifier)
 	if err != nil {
-		return nil, false, fmt.Errorf("load tracks %q: %w", identifier, err)
+		return domainmusic.LoadResult{}, false, fmt.Errorf("load tracks %q: %w", identifier, err)
 	}
 
 	switch data := result.Data.(type) {
 	case lavalink.Track:
-		return []domainmusic.Track{mapTrack(data)}, true, nil
+		return domainmusic.LoadResult{
+			Type:   domainmusic.LoadResultTypeTrack,
+			Tracks: []domainmusic.Track{mapTrack(data)},
+		}, true, nil
 	case lavalink.Search:
 		tracks := make([]domainmusic.Track, 0, len(data))
 		for _, track := range data {
 			tracks = append(tracks, mapTrack(track))
 		}
-		return tracks, len(tracks) > 0, nil
+		return domainmusic.LoadResult{
+			Type:   domainmusic.LoadResultTypeSearch,
+			Tracks: tracks,
+		}, len(tracks) > 0, nil
 	case lavalink.Playlist:
 		tracks := make([]domainmusic.Track, 0, len(data.Tracks))
 		for _, track := range data.Tracks {
 			tracks = append(tracks, mapTrack(track))
 		}
-		return tracks, len(tracks) > 0, nil
+		return domainmusic.LoadResult{
+			Type:   domainmusic.LoadResultTypePlaylist,
+			Tracks: tracks,
+			Collection: &domainmusic.Collection{
+				Name:          data.Info.Name,
+				SelectedTrack: data.Info.SelectedTrack,
+			},
+		}, len(tracks) > 0, nil
 	case lavalink.Empty:
-		return nil, false, nil
+		return domainmusic.LoadResult{}, false, nil
 	case lavalink.Exception:
-		return nil, false, data
+		return domainmusic.LoadResult{}, false, data
 	default:
-		return nil, false, fmt.Errorf("unsupported lavalink load result for %q: %T", identifier, data)
+		return domainmusic.LoadResult{}, false, fmt.Errorf("unsupported lavalink load result for %q: %T", identifier, data)
 	}
 }
 

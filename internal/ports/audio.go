@@ -17,6 +17,7 @@ type AudioBackend interface {
 	VoiceBridge
 	Connect(ctx context.Context) error
 	Close(ctx context.Context) error
+	LoadTracks(ctx context.Context, query string) (domainmusic.LoadResult, error)
 	SearchTracks(ctx context.Context, query string) ([]domainmusic.Track, error)
 	PlayTrack(ctx context.Context, guildID string, track domainmusic.Track) error
 	Pause(ctx context.Context, guildID string) error

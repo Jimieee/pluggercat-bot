@@ -73,6 +73,40 @@ func TestAutocompleteSelectionEnqueuesExactTrack(t *testing.T) {
 	}
 }
 
+func TestAutocompleteSkipsDirectURLs(t *testing.T) {
+	backend := &fakeAudioBackend{
+		searchResults: []domainmusic.Track{
+			{
+				ID:        "track-1",
+				Title:     "Playlist Track",
+				Author:    "Artist",
+				Duration:  212 * time.Second,
+				Reference: "encoded-1",
+				Source:    "soundcloud",
+				URL:       "https://soundcloud.com/example/track-1",
+			},
+		},
+	}
+
+	service := NewService(memory.NewQueueRepository(), backend)
+
+	suggestions, err := service.Autocomplete(
+		context.Background(),
+		"user-1",
+		"https://soundcloud.com/example/sets/very-long-playlist-link?si=123&utm_source=clipboard&utm_medium=text&utm_campaign=social_sharing",
+		10,
+	)
+	if err != nil {
+		t.Fatalf("autocomplete returned error: %v", err)
+	}
+	if len(suggestions) != 0 {
+		t.Fatalf("expected no suggestions for direct URLs, got %d", len(suggestions))
+	}
+	if backend.searchCalls != 0 {
+		t.Fatalf("expected no backend search calls for direct URLs, got %d", backend.searchCalls)
+	}
+}
+
 func TestEnqueueReturnsSelectionExpiredForUnknownToken(t *testing.T) {
 	backend := &fakeAudioBackend{}
 	service := NewService(memory.NewQueueRepository(), backend)

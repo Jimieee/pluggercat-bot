@@ -57,37 +57,45 @@ func RegisterMusic(
 				return ephemeralMessage(event, "You must specify a URL or search query.")
 			}
 
-			if err := discordGateway.JoinVoiceChannel(context.Background(), guildID.String(), *channelID); err != nil {
-				return ephemeralMessage(event, "You could not join your voice channel.")
+			if err := event.DeferCreateMessage(false); err != nil {
+				return err
 			}
 
-			track, started, err := service.Enqueue(context.Background(), guildID.String(), query)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+
+			if err := discordGateway.JoinVoiceChannel(ctx, guildID.String(), *channelID); err != nil {
+				return updateInteractionResponse(event, discord.NewMessageUpdate().WithContent("I could not join your voice channel."))
+			}
+
+			result, err := service.EnqueueQuery(ctx, guildID.String(), query)
 			if err != nil {
 				if errors.Is(err, musicapp.ErrNoTracksFound) {
-					return ephemeralMessage(event, "I could not find any results for that search.")
+					return updateInteractionResponse(event, discord.NewMessageUpdate().WithContent("I could not find any results for that search."))
 				}
 				if errors.Is(err, musicapp.ErrAutocompleteSelectionExpired) {
-					return ephemeralMessage(event, "That suggestion expired. Please run `/play` again and choose a fresh result.")
+					return updateInteractionResponse(event, discord.NewMessageUpdate().WithContent("That suggestion expired. Please run `/play` again and choose a fresh result."))
 				}
-				return ephemeralMessage(event, "You could not add that track to the queue.")
+				return updateInteractionResponse(event, discord.NewMessageUpdate().WithContent("You could not add that track to the queue."))
 			}
 
 			title := "Added to Queue"
-			if started {
+			if result.Started {
 				voiceSupervisor.OnPlaybackStarted(guildID.String())
 				title = "Now Playing"
 			}
 
-			return event.CreateMessage(
-				discord.NewMessageCreate().
-					WithEmbeds(musicui.BuildPlaybackEmbed(title, track, "Requested by "+event.User().EffectiveName())),
+			return updateInteractionResponse(
+				event,
+				discord.NewMessageUpdate().
+					WithEmbeds(musicui.BuildEnqueueEmbed(title, result, "Requested by "+event.User().EffectiveName())),
 			)
 		},
 	)
 
 	router.RegisterAutocomplete("play", func(event *events.AutocompleteInteractionCreate) error {
 		query := strings.TrimSpace(event.Data.String("query"))
-		if query == "" {
+		if query == "" || strings.HasPrefix(query, "http://") || strings.HasPrefix(query, "https://") {
 			return event.AutocompleteResult([]discord.AutocompleteChoice{})
 		}
 

@@ -74,7 +74,10 @@ func (a *searchAssistant) Suggest(
 	if trimmedQuery == "" || a.IsSelectionToken(trimmedQuery) {
 		return nil, nil
 	}
-	if !isDirectURL(trimmedQuery) && utf8.RuneCountInString(trimmedQuery) < autocompleteMinQueryRunes {
+	if isDirectURL(trimmedQuery) {
+		return nil, nil
+	}
+	if utf8.RuneCountInString(trimmedQuery) < autocompleteMinQueryRunes {
 		return nil, nil
 	}
 

@@ -15,9 +15,13 @@ import (
 )
 
 const (
-	accentColor    = 0x1DB954
-	queuePageSize  = 10
-	searchPageSize = 10
+	accentColor                  = 0x1DB954
+	queuePageSize                = 10
+	searchPageSize               = 10
+	discordEmbedFieldValueLimit  = 1024
+	discordEmbedDescriptionLimit = 4096
+	queueTrackLineLimit          = 88
+	searchTrackLineLimit         = 120
 )
 
 type queueActionMode string
@@ -49,6 +53,19 @@ func BuildPlaybackEmbed(title string, track domainmusic.Track, footerText string
 
 	if track.ISRC != "" {
 		embed = embed.AddField("ISRC", track.ISRC, true)
+	}
+
+	return embed
+}
+
+func BuildEnqueueEmbed(title string, result musicapp.EnqueueResult, footerText string) discord.Embed {
+	embed := BuildPlaybackEmbed(title, result.LeadTrack, footerText)
+
+	if result.AddedCount > 1 {
+		embed = embed.AddField("Tracks Added", strconv.Itoa(result.AddedCount), true)
+		if strings.TrimSpace(result.CollectionName) != "" {
+			embed = embed.AddField("Collection", truncateString(result.CollectionName, 1024), true)
+		}
 	}
 
 	return embed
@@ -144,7 +161,7 @@ func buildQueuePage(queue domainmusic.Queue, page int, mode queueActionMode) pag
 
 	currentLine := "Nothing is playing right now."
 	if queue.Current != nil {
-		currentLine = linkedTrackSummary(*queue.Current)
+		currentLine = truncateString(formatTrack(*queue.Current), discordEmbedFieldValueLimit)
 		if queue.Current.Artwork != "" {
 			embed = embed.WithThumbnail(queue.Current.Artwork)
 		}
@@ -336,9 +353,9 @@ func queueSliceLines(tracks []domainmusic.Track, page int, pageSize int) string 
 	start, end := pageBounds(len(tracks), page, pageSize)
 	lines := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
-		lines = append(lines, fmt.Sprintf("%d. %s", i+1, linkedTrackSummary(tracks[i])))
+		lines = append(lines, fmt.Sprintf("%d. %s", i+1, truncateString(formatTrack(tracks[i]), queueTrackLineLimit)))
 	}
-	return strings.Join(lines, "\n")
+	return joinLinesWithinLimit(lines, discordEmbedFieldValueLimit)
 }
 
 func searchResultsLines(tracks []domainmusic.Track, start int) string {
@@ -348,9 +365,9 @@ func searchResultsLines(tracks []domainmusic.Track, start int) string {
 
 	lines := make([]string, 0, len(tracks))
 	for i, track := range tracks {
-		lines = append(lines, fmt.Sprintf("`%02d` %s", start+i+1, linkedTrackSummary(track)))
+		lines = append(lines, fmt.Sprintf("`%02d` %s", start+i+1, truncateString(formatTrack(track), searchTrackLineLimit)))
 	}
-	return strings.Join(lines, "\n")
+	return joinLinesWithinLimit(lines, discordEmbedDescriptionLimit)
 }
 
 func trackSummary(track domainmusic.Track) string {
@@ -463,6 +480,55 @@ func truncateString(value string, maxRunes int) string {
 		return string(runes[:maxRunes])
 	}
 	return string(runes[:maxRunes-3]) + "..."
+}
+
+func joinLinesWithinLimit(lines []string, maxRunes int) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	if maxRunes <= 0 {
+		return strings.Join(lines, "\n")
+	}
+
+	joined := make([]string, 0, len(lines))
+	used := 0
+	truncated := false
+
+	for _, line := range lines {
+		lineRunes := utf8.RuneCountInString(line)
+		extra := lineRunes
+		if len(joined) > 0 {
+			extra++
+		}
+		if used+extra > maxRunes {
+			truncated = true
+			break
+		}
+		joined = append(joined, line)
+		used += extra
+	}
+
+	if !truncated {
+		return strings.Join(joined, "\n")
+	}
+
+	ellipsis := "..."
+	if len(joined) == 0 {
+		return truncateString(ellipsis, maxRunes)
+	}
+
+	lastIndex := len(joined) - 1
+	lastLine := joined[lastIndex]
+	remaining := maxRunes - (used - utf8.RuneCountInString(lastLine))
+	if len(joined) > 1 {
+		remaining--
+	}
+	joined[lastIndex] = truncateString(lastLine, max(remaining, 1))
+	result := strings.Join(joined, "\n")
+	if utf8.RuneCountInString(result) <= maxRunes {
+		return result
+	}
+	return truncateString(result, maxRunes)
 }
 
 func normalizeRepeatMode(mode domainmusic.RepeatMode) domainmusic.RepeatMode {

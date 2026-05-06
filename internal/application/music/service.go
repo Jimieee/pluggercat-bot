@@ -32,30 +32,65 @@ func NewService(queues ports.QueueRepository, audio ports.AudioBackend) *Service
 	}
 }
 
-// searches for tracks matching the query, enqueues the first result, and starts playback if nothing is currently playing
+// Enqueue keeps the original single-track contract used by existing flows. For
+// richer handling of playlists/albums, prefer EnqueueQuery.
 func (s *Service) Enqueue(ctx context.Context, guildID string, query string) (domainmusic.Track, bool, error) {
+	result, err := s.EnqueueQuery(ctx, guildID, query)
+	if err != nil {
+		return domainmusic.Track{}, false, err
+	}
+	return result.LeadTrack, result.Started, nil
+}
+
+// EnqueueQuery resolves a query or URL, preserves the Lavalink load result type,
+// and enqueues the full playback order when a playlist/album-like collection is loaded.
+func (s *Service) EnqueueQuery(ctx context.Context, guildID string, query string) (EnqueueResult, error) {
 	selectedTrack, selected := s.search.ResolveSelection(query)
 
 	if selected {
-		return s.enqueueResolvedTrack(ctx, guildID, selectedTrack)
+		leadTrack, started, err := s.enqueueTracks(ctx, guildID, []domainmusic.Track{selectedTrack})
+		if err != nil {
+			return EnqueueResult{}, err
+		}
+		return EnqueueResult{
+			LeadTrack:  leadTrack,
+			Started:    started,
+			AddedCount: 1,
+			LoadType:   domainmusic.LoadResultTypeTrack,
+		}, nil
 	}
 	if s.search.IsSelectionToken(query) {
-		return domainmusic.Track{}, false, ErrAutocompleteSelectionExpired
+		return EnqueueResult{}, ErrAutocompleteSelectionExpired
 	}
 
-	tracks, err := s.audio.SearchTracks(ctx, query)
+	loadResult, err := s.audio.LoadTracks(ctx, query)
 	if err != nil {
-		return domainmusic.Track{}, false, fmt.Errorf("search tracks: %w", err)
+		return EnqueueResult{}, fmt.Errorf("load tracks: %w", err)
 	}
-	if len(tracks) == 0 {
-		return domainmusic.Track{}, false, ErrNoTracksFound
+	if !loadResult.HasTracks() {
+		return EnqueueResult{}, ErrNoTracksFound
 	}
 
-	return s.enqueueResolvedTrack(ctx, guildID, tracks[0])
+	orderedTracks := loadResult.PlaybackOrder()
+	leadTrack, started, err := s.enqueueTracks(ctx, guildID, orderedTracks)
+	if err != nil {
+		return EnqueueResult{}, err
+	}
+
+	result := EnqueueResult{
+		LeadTrack:  leadTrack,
+		Started:    started,
+		AddedCount: len(orderedTracks),
+		LoadType:   loadResult.Type,
+	}
+	if loadResult.Collection != nil {
+		result.CollectionName = loadResult.Collection.Name
+	}
+	return result, nil
 }
 
 func (s *Service) EnqueueTrack(ctx context.Context, guildID string, track domainmusic.Track) (domainmusic.Track, bool, error) {
-	return s.enqueueResolvedTrack(ctx, guildID, track)
+	return s.enqueueTracks(ctx, guildID, []domainmusic.Track{track})
 }
 
 func (s *Service) Search(ctx context.Context, query string) ([]domainmusic.Track, error) {
@@ -69,16 +104,21 @@ func (s *Service) Search(ctx context.Context, query string) ([]domainmusic.Track
 	return tracks, nil
 }
 
-func (s *Service) enqueueResolvedTrack(ctx context.Context, guildID string, selectedTrack domainmusic.Track) (domainmusic.Track, bool, error) {
+func (s *Service) enqueueTracks(ctx context.Context, guildID string, tracks []domainmusic.Track) (domainmusic.Track, bool, error) {
+	if len(tracks) == 0 {
+		return domainmusic.Track{}, false, ErrNoTracksFound
+	}
+
 	queue, err := s.loadQueue(ctx, guildID)
 	if err != nil {
 		return domainmusic.Track{}, false, err
 	}
 
-	// enqueue the first search result
-	queue = queue.Enqueue(selectedTrack)
+	for _, track := range tracks {
+		queue = queue.Enqueue(track)
+	}
 
-	// if nothing is currently playing, start playback of the newly enqueued track
+	leadTrack := tracks[0]
 	started := false
 	if queue.Current == nil {
 		nextTrack, updatedQueue, ok := queue.StartNext()
@@ -87,16 +127,16 @@ func (s *Service) enqueueResolvedTrack(ctx context.Context, guildID string, sele
 				return domainmusic.Track{}, false, fmt.Errorf("start playback: %w", err)
 			}
 			queue = updatedQueue
+			leadTrack = nextTrack
 			started = true
 		}
 	}
 
-	// save the updated queue state
 	if err := s.queues.Save(ctx, queue); err != nil {
 		return domainmusic.Track{}, false, fmt.Errorf("save queue: %w", err)
 	}
 
-	return selectedTrack, started, nil
+	return leadTrack, started, nil
 }
 
 func (s *Service) Autocomplete(ctx context.Context, userID string, query string, limit int) ([]SearchSuggestion, error) {

@@ -12,7 +12,9 @@ import (
 
 type fakeAudioBackend struct {
 	searchResults []domainmusic.Track
+	loadResult    domainmusic.LoadResult
 	searchCalls   int
+	loadCalls     int
 	played        []domainmusic.Track
 	paused        int
 	resumed       int
@@ -30,6 +32,17 @@ func (f *fakeAudioBackend) Close(context.Context) error {
 func (f *fakeAudioBackend) SearchTracks(context.Context, string) ([]domainmusic.Track, error) {
 	f.searchCalls++
 	return f.searchResults, nil
+}
+
+func (f *fakeAudioBackend) LoadTracks(context.Context, string) (domainmusic.LoadResult, error) {
+	f.loadCalls++
+	if f.loadResult.Type != "" || len(f.loadResult.Tracks) > 0 || f.loadResult.Collection != nil {
+		return f.loadResult, nil
+	}
+	return domainmusic.LoadResult{
+		Type:   domainmusic.LoadResultTypeSearch,
+		Tracks: append([]domainmusic.Track(nil), f.searchResults...),
+	}, nil
 }
 
 func (f *fakeAudioBackend) PlayTrack(_ context.Context, _ string, track domainmusic.Track) error {
@@ -87,6 +100,102 @@ func TestEnqueueStartsFirstTrack(t *testing.T) {
 	}
 	if len(backend.played) != 1 {
 		t.Fatalf("expected 1 played track, got %d", len(backend.played))
+	}
+}
+
+func TestEnqueueQueryAddsFullPlaylist(t *testing.T) {
+	backend := &fakeAudioBackend{
+		loadResult: domainmusic.LoadResult{
+			Type: domainmusic.LoadResultTypePlaylist,
+			Tracks: []domainmusic.Track{
+				{ID: "track-1", Title: "Track 1", Author: "Artist", Duration: 3 * time.Minute, Reference: "encoded-1"},
+				{ID: "track-2", Title: "Track 2", Author: "Artist", Duration: 4 * time.Minute, Reference: "encoded-2"},
+				{ID: "track-3", Title: "Track 3", Author: "Artist", Duration: 5 * time.Minute, Reference: "encoded-3"},
+			},
+			Collection: &domainmusic.Collection{
+				Name:          "My Playlist",
+				SelectedTrack: -1,
+			},
+		},
+	}
+
+	repo := memory.NewQueueRepository()
+	service := NewService(repo, backend)
+
+	result, err := service.EnqueueQuery(context.Background(), "guild-1", "https://example.com/playlist")
+	if err != nil {
+		t.Fatalf("enqueue query returned error: %v", err)
+	}
+	if !result.Started {
+		t.Fatalf("expected playback to start for the first playlist track")
+	}
+	if result.LeadTrack.ID != "track-1" {
+		t.Fatalf("unexpected lead track id: %s", result.LeadTrack.ID)
+	}
+	if result.AddedCount != 3 {
+		t.Fatalf("expected 3 tracks to be added, got %d", result.AddedCount)
+	}
+	if result.CollectionName != "My Playlist" {
+		t.Fatalf("unexpected collection name: %s", result.CollectionName)
+	}
+
+	queue, found, err := repo.Get(context.Background(), "guild-1")
+	if err != nil {
+		t.Fatalf("load queue returned error: %v", err)
+	}
+	if !found {
+		t.Fatalf("expected queue to be saved")
+	}
+	if queue.Current == nil || queue.Current.ID != "track-1" {
+		t.Fatalf("expected track-1 to be playing, got %+v", queue.Current)
+	}
+	if len(queue.Upcoming) != 2 || queue.Upcoming[0].ID != "track-2" || queue.Upcoming[1].ID != "track-3" {
+		t.Fatalf("unexpected upcoming order: %+v", queue.Upcoming)
+	}
+}
+
+func TestEnqueueQueryHonorsSelectedTrackInPlaylist(t *testing.T) {
+	backend := &fakeAudioBackend{
+		loadResult: domainmusic.LoadResult{
+			Type: domainmusic.LoadResultTypePlaylist,
+			Tracks: []domainmusic.Track{
+				{ID: "track-1", Title: "Track 1", Author: "Artist", Duration: 3 * time.Minute, Reference: "encoded-1"},
+				{ID: "track-2", Title: "Track 2", Author: "Artist", Duration: 4 * time.Minute, Reference: "encoded-2"},
+				{ID: "track-3", Title: "Track 3", Author: "Artist", Duration: 5 * time.Minute, Reference: "encoded-3"},
+			},
+			Collection: &domainmusic.Collection{
+				Name:          "My Playlist",
+				SelectedTrack: 1,
+			},
+		},
+	}
+
+	repo := memory.NewQueueRepository()
+	service := NewService(repo, backend)
+
+	result, err := service.EnqueueQuery(context.Background(), "guild-1", "https://example.com/playlist?selected=2")
+	if err != nil {
+		t.Fatalf("enqueue query returned error: %v", err)
+	}
+	if result.LeadTrack.ID != "track-2" {
+		t.Fatalf("expected selected track to play first, got %s", result.LeadTrack.ID)
+	}
+	if len(backend.played) != 1 || backend.played[0].ID != "track-2" {
+		t.Fatalf("unexpected played tracks: %+v", backend.played)
+	}
+
+	queue, found, err := repo.Get(context.Background(), "guild-1")
+	if err != nil {
+		t.Fatalf("load queue returned error: %v", err)
+	}
+	if !found {
+		t.Fatalf("expected queue to be saved")
+	}
+	if queue.Current == nil || queue.Current.ID != "track-2" {
+		t.Fatalf("expected track-2 to be playing, got %+v", queue.Current)
+	}
+	if len(queue.Upcoming) != 2 || queue.Upcoming[0].ID != "track-3" || queue.Upcoming[1].ID != "track-1" {
+		t.Fatalf("unexpected upcoming order: %+v", queue.Upcoming)
 	}
 }
 

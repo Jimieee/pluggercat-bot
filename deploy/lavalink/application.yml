@@ -8,6 +8,9 @@ lavalink:
   plugins:
     - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.0"
       snapshot: false
+    - dependency: "com.github.topi314.lavasrc:lavasrc-plugin:4.8.0"
+      repository: "https://maven.lavalink.dev/releases"
+      snapshot: false
   server:
     password: "override-me-with-LAVALINK_SERVER_PASSWORD"
     sources:
@@ -37,7 +40,7 @@ lavalink:
     resamplingQuality: LOW
     trackStuckThresholdMs: 10000
     useSeekGhosting: true
-    youtubePlaylistLoadLimit: 6
+    youtubePlaylistLoadLimit: ${LAVALINK_YOUTUBE_PLAYLIST_LOAD_LIMIT:100}
     playerUpdateInterval: 5
     youtubeSearchEnabled: true
     soundcloudSearchEnabled: true
@@ -58,6 +61,44 @@ plugins:
       - ANDROID_VR
       - WEB
       - TVHTML5_SIMPLY
+  lavasrc:
+    providers:
+      - "ytsearch:\"%ISRC%\""
+      - "ytmsearch:%QUERY%"
+      - "ytsearch:%QUERY%"
+    sources:
+      spotify: ${LAVASRC_ENABLE_SPOTIFY:false}
+      applemusic: ${LAVASRC_ENABLE_APPLE_MUSIC:false}
+      deezer: ${LAVASRC_ENABLE_DEEZER:false}
+      yandexmusic: false
+      flowerytts: false
+      youtube: false
+      vkmusic: false
+      tidal: false
+      qobuz: false
+      ytdlp: false
+      jiosaavn: false
+    spotify:
+      clientId: "${LAVASRC_SPOTIFY_CLIENT_ID:}"
+      clientSecret: "${LAVASRC_SPOTIFY_CLIENT_SECRET:}"
+      countryCode: "${LAVASRC_SPOTIFY_COUNTRY_CODE:US}"
+      playlistLoadLimit: ${LAVASRC_SPOTIFY_PLAYLIST_PAGE_LIMIT:6}
+      albumLoadLimit: ${LAVASRC_SPOTIFY_ALBUM_PAGE_LIMIT:6}
+      resolveArtistsInSearch: true
+      localFiles: false
+      preferAnonymousToken: ${LAVASRC_SPOTIFY_PREFER_ANONYMOUS_TOKEN:false}
+      customTokenEndpoint: "${LAVASRC_SPOTIFY_CUSTOM_TOKEN_ENDPOINT:}"
+    applemusic:
+      countryCode: "${LAVASRC_APPLE_MUSIC_COUNTRY_CODE:US}"
+      mediaAPIToken: "${LAVASRC_APPLE_MUSIC_MEDIA_API_TOKEN:}"
+      playlistLoadLimit: ${LAVASRC_APPLE_MUSIC_PLAYLIST_PAGE_LIMIT:6}
+      albumLoadLimit: ${LAVASRC_APPLE_MUSIC_ALBUM_PAGE_LIMIT:6}
+    deezer:
+      masterDecryptionKey: "${LAVASRC_DEEZER_MASTER_DECRYPTION_KEY:}"
+      arl: "${LAVASRC_DEEZER_ARL:}"
+      formats:
+        - "MP3_320"
+        - "MP3_128"
 
 metrics:
   prometheus:
