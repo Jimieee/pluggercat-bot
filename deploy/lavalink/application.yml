@@ -66,6 +66,10 @@ plugins:
       TV:
         searching: false
         playlistLoading: false
+    remoteCipher:
+      url: "${YOUTUBE_REMOTE_CIPHER_URL:http://yt-cipher:8001}"
+      password: "${YOUTUBE_REMOTE_CIPHER_PASSWORD:pluggercat-yt-cipher}"
+      userAgent: "${YOUTUBE_REMOTE_CIPHER_USER_AGENT:pluggercat}"
     pot:
       token: "${YOUTUBE_POT_TOKEN:}"
       visitorData: "${YOUTUBE_VISITOR_DATA:}"

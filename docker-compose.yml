@@ -31,9 +31,22 @@ services:
     networks:
       - backend
 
+  yt-cipher:
+    image: ghcr.io/kikkia/yt-cipher:master
+    restart: unless-stopped
+    environment:
+      API_TOKEN: ${YOUTUBE_REMOTE_CIPHER_PASSWORD:-pluggercat-yt-cipher}
+    expose:
+      - "8001"
+    networks:
+      - backend
+
   lavalink:
     image: ghcr.io/lavalink-devs/lavalink:4-alpine
     restart: unless-stopped
+    depends_on:
+      yt-cipher:
+        condition: service_started
     environment:
       _JAVA_OPTIONS: -Xms512M -Xmx512M
       SERVER_PORT: 2333
@@ -61,6 +74,9 @@ services:
       YOUTUBE_OAUTH_ENABLED: ${YOUTUBE_OAUTH_ENABLED:-false}
       YOUTUBE_OAUTH_REFRESH_TOKEN: ${YOUTUBE_OAUTH_REFRESH_TOKEN:-}
       YOUTUBE_OAUTH_SKIP_INITIALIZATION: ${YOUTUBE_OAUTH_SKIP_INITIALIZATION:-false}
+      YOUTUBE_REMOTE_CIPHER_URL: ${YOUTUBE_REMOTE_CIPHER_URL:-http://yt-cipher:8001}
+      YOUTUBE_REMOTE_CIPHER_PASSWORD: ${YOUTUBE_REMOTE_CIPHER_PASSWORD:-pluggercat-yt-cipher}
+      YOUTUBE_REMOTE_CIPHER_USER_AGENT: ${YOUTUBE_REMOTE_CIPHER_USER_AGENT:-pluggercat}
     volumes:
       - ./deploy/lavalink/application.yml:/opt/Lavalink/application.yml:ro
     ports:

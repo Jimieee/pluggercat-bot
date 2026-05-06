@@ -56,3 +56,28 @@ LAVASRC_DEEZER_ARL=your_deezer_arl_cookie
 ```
 
 Deezer is the direct source in this stack. If you do not provide both credentials, Deezer links should remain disabled.
+
+## YouTube on VPS
+
+For VPS and datacenter IPs, the recommended `youtube-source` stack is:
+
+- `TV` client for authenticated playback with OAuth
+- `remoteCipher` enabled for signature deciphering
+
+This repository now wires a `yt-cipher` service into `docker-compose.yml` and points Lavalink to it by default. That follows the current `youtube-source` guidance that YouTube cipher changes are becoming more frequent and complex, so remote ciphering is the safer path when local extraction breaks.
+
+Relevant `.env` values:
+
+```env
+YOUTUBE_OAUTH_ENABLED=true
+YOUTUBE_OAUTH_REFRESH_TOKEN=your_refresh_token
+YOUTUBE_REMOTE_CIPHER_URL=http://yt-cipher:8001
+YOUTUBE_REMOTE_CIPHER_PASSWORD=pluggercat-yt-cipher
+YOUTUBE_REMOTE_CIPHER_USER_AGENT=pluggercat
+```
+
+After changing YouTube or source settings, recreate Lavalink:
+
+```bash
+docker compose up -d --force-recreate lavalink
+```
