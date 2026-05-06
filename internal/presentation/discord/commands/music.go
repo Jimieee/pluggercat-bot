@@ -26,12 +26,15 @@ func RegisterMusic(
 ) {
 	queueUI := musicui.NewQueueManager(service, voiceSupervisor, pager)
 	router.RegisterModalPrefix(musicui.QueueModalPrefix, queueUI.HandleModal)
+	guildIntegrationTypes, guildContexts := guildOnlyCommandMetadata()
 
 	router.Register(
 		"play",
 		discord.SlashCommandCreate{
-			Name:        "play",
-			Description: "plays a track from a URL or search query",
+			Name:             "play",
+			Description:      "plays a track from a URL or search query",
+			IntegrationTypes: guildIntegrationTypes,
+			Contexts:         guildContexts,
 			Options: []discord.ApplicationCommandOption{
 				discord.ApplicationCommandOptionString{
 					Name:         "query",
@@ -113,8 +116,10 @@ func RegisterMusic(
 	router.Register(
 		"search",
 		discord.SlashCommandCreate{
-			Name:        "search",
-			Description: "Searches tracks and lets you pick one from a paginated result view",
+			Name:             "search",
+			Description:      "Searches tracks and lets you pick one from a paginated result view",
+			IntegrationTypes: guildIntegrationTypes,
+			Contexts:         guildContexts,
 			Options: []discord.ApplicationCommandOption{
 				discord.ApplicationCommandOptionString{
 					Name:        "query",
@@ -235,8 +240,10 @@ func RegisterMusic(
 	router.Register(
 		"queue",
 		discord.SlashCommandCreate{
-			Name:        "queue",
-			Description: "Shows the current queue for the server",
+			Name:             "queue",
+			Description:      "Shows the current queue for the server",
+			IntegrationTypes: guildIntegrationTypes,
+			Contexts:         guildContexts,
 		},
 		func(event *events.ApplicationCommandInteractionCreate) error {
 			guildID, ok := requireGuild(event)
@@ -269,8 +276,10 @@ func RegisterMusic(
 	router.Register(
 		"pause",
 		discord.SlashCommandCreate{
-			Name:        "pause",
-			Description: "Pauses the current playback",
+			Name:             "pause",
+			Description:      "Pauses the current playback",
+			IntegrationTypes: guildIntegrationTypes,
+			Contexts:         guildContexts,
 		},
 		func(event *events.ApplicationCommandInteractionCreate) error {
 			guildID, ok := requireGuild(event)
@@ -296,8 +305,10 @@ func RegisterMusic(
 	router.Register(
 		"resume",
 		discord.SlashCommandCreate{
-			Name:        "resume",
-			Description: "Resumes the current playback",
+			Name:             "resume",
+			Description:      "Resumes the current playback",
+			IntegrationTypes: guildIntegrationTypes,
+			Contexts:         guildContexts,
 		},
 		func(event *events.ApplicationCommandInteractionCreate) error {
 			guildID, ok := requireGuild(event)
@@ -323,8 +334,10 @@ func RegisterMusic(
 	router.Register(
 		"skip",
 		discord.SlashCommandCreate{
-			Name:        "skip",
-			Description: "Skips the current track and plays the next one in the queue",
+			Name:             "skip",
+			Description:      "Skips the current track and plays the next one in the queue",
+			IntegrationTypes: guildIntegrationTypes,
+			Contexts:         guildContexts,
 		},
 		func(event *events.ApplicationCommandInteractionCreate) error {
 			guildID, ok := requireGuild(event)
@@ -359,8 +372,10 @@ func RegisterMusic(
 	router.Register(
 		"leave",
 		discord.SlashCommandCreate{
-			Name:        "leave",
-			Description: "Removes the bot from the voice channel and clears the queue",
+			Name:             "leave",
+			Description:      "Removes the bot from the voice channel and clears the queue",
+			IntegrationTypes: guildIntegrationTypes,
+			Contexts:         guildContexts,
 		},
 		func(event *events.ApplicationCommandInteractionCreate) error {
 			guildID, ok := requireGuild(event)
