@@ -10,13 +10,17 @@ import (
 )
 
 var (
-	ErrNoTracksFound  = errors.New("no tracks found")
-	ErrNothingPlaying = errors.New("nothing is currently playing")
+	ErrNoTracksFound                = errors.New("no tracks found")
+	ErrNothingPlaying               = errors.New("nothing is currently playing")
+	ErrAutocompleteSelectionExpired = errors.New("autocomplete selection expired")
+	ErrQueuePositionOutOfRange      = errors.New("queue position out of range")
+	ErrQueueRangeInvalid            = errors.New("queue range is invalid")
 )
 
 type Service struct {
 	queues ports.QueueRepository
 	audio  ports.AudioBackend
+	search *searchAssistant
 }
 
 // create a new music service with the given queue repository and audio backend
@@ -24,12 +28,21 @@ func NewService(queues ports.QueueRepository, audio ports.AudioBackend) *Service
 	return &Service{
 		queues: queues,
 		audio:  audio,
+		search: newSearchAssistant(),
 	}
 }
 
 // searches for tracks matching the query, enqueues the first result, and starts playback if nothing is currently playing
 func (s *Service) Enqueue(ctx context.Context, guildID string, query string) (domainmusic.Track, bool, error) {
-	// search for tracks matching the query
+	selectedTrack, selected := s.search.ResolveSelection(query)
+
+	if selected {
+		return s.enqueueResolvedTrack(ctx, guildID, selectedTrack)
+	}
+	if s.search.IsSelectionToken(query) {
+		return domainmusic.Track{}, false, ErrAutocompleteSelectionExpired
+	}
+
 	tracks, err := s.audio.SearchTracks(ctx, query)
 	if err != nil {
 		return domainmusic.Track{}, false, fmt.Errorf("search tracks: %w", err)
@@ -38,14 +51,31 @@ func (s *Service) Enqueue(ctx context.Context, guildID string, query string) (do
 		return domainmusic.Track{}, false, ErrNoTracksFound
 	}
 
-	// load the current queue for the guild
+	return s.enqueueResolvedTrack(ctx, guildID, tracks[0])
+}
+
+func (s *Service) EnqueueTrack(ctx context.Context, guildID string, track domainmusic.Track) (domainmusic.Track, bool, error) {
+	return s.enqueueResolvedTrack(ctx, guildID, track)
+}
+
+func (s *Service) Search(ctx context.Context, query string) ([]domainmusic.Track, error) {
+	tracks, err := s.audio.SearchTracks(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("search tracks: %w", err)
+	}
+	if len(tracks) == 0 {
+		return nil, ErrNoTracksFound
+	}
+	return tracks, nil
+}
+
+func (s *Service) enqueueResolvedTrack(ctx context.Context, guildID string, selectedTrack domainmusic.Track) (domainmusic.Track, bool, error) {
 	queue, err := s.loadQueue(ctx, guildID)
 	if err != nil {
 		return domainmusic.Track{}, false, err
 	}
 
 	// enqueue the first search result
-	selectedTrack := tracks[0]
 	queue = queue.Enqueue(selectedTrack)
 
 	// if nothing is currently playing, start playback of the newly enqueued track
@@ -67,6 +97,14 @@ func (s *Service) Enqueue(ctx context.Context, guildID string, query string) (do
 	}
 
 	return selectedTrack, started, nil
+}
+
+func (s *Service) Autocomplete(ctx context.Context, userID string, query string, limit int) ([]SearchSuggestion, error) {
+	suggestions, err := s.search.Suggest(ctx, userID, query, limit, s.audio.SearchTracks)
+	if err != nil {
+		return nil, fmt.Errorf("autocomplete suggestions: %w", err)
+	}
+	return suggestions, nil
 }
 
 // pauses playback if a track is currently playing
@@ -115,7 +153,7 @@ func (s *Service) Skip(ctx context.Context, guildID string) (domainmusic.Track, 
 		return domainmusic.Track{}, false, ErrNothingPlaying
 	}
 
-	nextTrack, updatedQueue, hasNext := queue.Advance()
+	nextTrack, updatedQueue, hasNext := queue.AdvanceAfterSkip()
 	if hasNext {
 		if err := s.audio.PlayTrack(ctx, guildID, nextTrack); err != nil {
 			return domainmusic.Track{}, false, fmt.Errorf("play next track: %w", err)
@@ -136,6 +174,142 @@ func (s *Service) Skip(ctx context.Context, guildID string) (domainmusic.Track, 
 // returns the current queue state for the guild
 func (s *Service) Queue(ctx context.Context, guildID string) (domainmusic.Queue, error) {
 	return s.loadQueue(ctx, guildID)
+}
+
+func (s *Service) RemoveUpcomingTrack(
+	ctx context.Context,
+	guildID string,
+	upcomingIndex int,
+) (domainmusic.Track, domainmusic.Queue, error) {
+	queue, err := s.loadQueue(ctx, guildID)
+	if err != nil {
+		return domainmusic.Track{}, domainmusic.Queue{}, err
+	}
+
+	removedTrack, updatedQueue, ok := queue.RemoveUpcoming(upcomingIndex)
+	if !ok {
+		return domainmusic.Track{}, domainmusic.Queue{}, ErrQueuePositionOutOfRange
+	}
+
+	if err := s.queues.Save(ctx, updatedQueue); err != nil {
+		return domainmusic.Track{}, domainmusic.Queue{}, fmt.Errorf("save queue after remove: %w", err)
+	}
+
+	return removedTrack, updatedQueue, nil
+}
+
+func (s *Service) RemoveUpcomingRange(
+	ctx context.Context,
+	guildID string,
+	startIndex int,
+	endIndex int,
+) (int, domainmusic.Queue, error) {
+	queue, err := s.loadQueue(ctx, guildID)
+	if err != nil {
+		return 0, domainmusic.Queue{}, err
+	}
+
+	removedTracks, updatedQueue, ok := queue.RemoveUpcomingRange(startIndex, endIndex)
+	if !ok {
+		return 0, domainmusic.Queue{}, ErrQueueRangeInvalid
+	}
+
+	if err := s.queues.Save(ctx, updatedQueue); err != nil {
+		return 0, domainmusic.Queue{}, fmt.Errorf("save queue after remove range: %w", err)
+	}
+
+	return len(removedTracks), updatedQueue, nil
+}
+
+func (s *Service) ClearUpcomingTracks(ctx context.Context, guildID string) (int, domainmusic.Queue, error) {
+	queue, err := s.loadQueue(ctx, guildID)
+	if err != nil {
+		return 0, domainmusic.Queue{}, err
+	}
+
+	removedCount := len(queue.Upcoming)
+	updatedQueue := queue.ClearUpcoming()
+	if err := s.queues.Save(ctx, updatedQueue); err != nil {
+		return 0, domainmusic.Queue{}, fmt.Errorf("save queue after clear: %w", err)
+	}
+
+	return removedCount, updatedQueue, nil
+}
+
+func (s *Service) ShuffleUpcomingTracks(ctx context.Context, guildID string) (domainmusic.Queue, error) {
+	queue, err := s.loadQueue(ctx, guildID)
+	if err != nil {
+		return domainmusic.Queue{}, err
+	}
+
+	updatedQueue := queue.ShuffleUpcoming()
+	if err := s.queues.Save(ctx, updatedQueue); err != nil {
+		return domainmusic.Queue{}, fmt.Errorf("save queue after shuffle: %w", err)
+	}
+
+	return updatedQueue, nil
+}
+
+func (s *Service) JumpToUpcomingTrack(
+	ctx context.Context,
+	guildID string,
+	upcomingIndex int,
+) (domainmusic.Track, domainmusic.Queue, error) {
+	queue, err := s.loadQueue(ctx, guildID)
+	if err != nil {
+		return domainmusic.Track{}, domainmusic.Queue{}, err
+	}
+
+	selectedTrack, updatedQueue, ok := queue.JumpToUpcoming(upcomingIndex)
+	if !ok {
+		return domainmusic.Track{}, domainmusic.Queue{}, ErrQueuePositionOutOfRange
+	}
+
+	if err := s.audio.PlayTrack(ctx, guildID, selectedTrack); err != nil {
+		return domainmusic.Track{}, domainmusic.Queue{}, fmt.Errorf("jump to queued track: %w", err)
+	}
+	if err := s.queues.Save(ctx, updatedQueue); err != nil {
+		return domainmusic.Track{}, domainmusic.Queue{}, fmt.Errorf("save queue after jump: %w", err)
+	}
+
+	return selectedTrack, updatedQueue, nil
+}
+
+func (s *Service) MoveUpcomingTrack(
+	ctx context.Context,
+	guildID string,
+	fromIndex int,
+	toIndex int,
+) (domainmusic.Queue, error) {
+	queue, err := s.loadQueue(ctx, guildID)
+	if err != nil {
+		return domainmusic.Queue{}, err
+	}
+
+	updatedQueue, ok := queue.MoveUpcoming(fromIndex, toIndex)
+	if !ok {
+		return domainmusic.Queue{}, ErrQueuePositionOutOfRange
+	}
+
+	if err := s.queues.Save(ctx, updatedQueue); err != nil {
+		return domainmusic.Queue{}, fmt.Errorf("save queue after move: %w", err)
+	}
+
+	return updatedQueue, nil
+}
+
+func (s *Service) CycleRepeatMode(ctx context.Context, guildID string) (domainmusic.Queue, error) {
+	queue, err := s.loadQueue(ctx, guildID)
+	if err != nil {
+		return domainmusic.Queue{}, err
+	}
+
+	updatedQueue := queue.CycleRepeatMode()
+	if err := s.queues.Save(ctx, updatedQueue); err != nil {
+		return domainmusic.Queue{}, fmt.Errorf("save queue after repeat change: %w", err)
+	}
+
+	return updatedQueue, nil
 }
 
 // advances the queue and starts playback of the next track if there is one, typically called when a track ends to automatically play the next one in the queue
@@ -163,7 +337,7 @@ func (s *Service) AdvanceAfterTrackEnd(ctx context.Context, guildID string) (dom
 		return nextTrack, true, nil
 	}
 
-	nextTrack, updatedQueue, hasNext := queue.Advance()
+	nextTrack, updatedQueue, hasNext := queue.AdvanceAfterTrackEnd()
 	if !hasNext {
 		if err := s.queues.Delete(ctx, guildID); err != nil {
 			return domainmusic.Track{}, false, fmt.Errorf("delete queue after end: %w", err)

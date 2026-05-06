@@ -21,14 +21,17 @@ import (
 var _ ports.DiscordGateway = (*Client)(nil)
 
 type Client struct {
-	logger        *slog.Logger
-	cfg           config.DiscordConfig
-	raw           *bot.Client
-	commands      []discord.ApplicationCommandCreate
-	voiceBridge   ports.VoiceBridge
-	voiceHandlers []ports.VoiceStateHandler
-	voiceMu       sync.RWMutex
-	commandHandle func(*events.ApplicationCommandInteractionCreate)
+	logger             *slog.Logger
+	cfg                config.DiscordConfig
+	raw                *bot.Client
+	commands           []discord.ApplicationCommandCreate
+	voiceBridge        ports.VoiceBridge
+	voiceHandlers      []ports.VoiceStateHandler
+	voiceMu            sync.RWMutex
+	commandHandle      func(*events.ApplicationCommandInteractionCreate)
+	autocompleteHandle func(*events.AutocompleteInteractionCreate)
+	componentHandle    func(*events.ComponentInteractionCreate)
+	modalHandle        func(*events.ModalSubmitInteractionCreate)
 }
 
 // creates a new discord client with the given config and logger
@@ -36,11 +39,17 @@ func New(
 	cfg config.DiscordConfig,
 	logger *slog.Logger,
 	commandHandler func(*events.ApplicationCommandInteractionCreate),
+	autocompleteHandler func(*events.AutocompleteInteractionCreate),
+	componentHandler func(*events.ComponentInteractionCreate),
+	modalHandler func(*events.ModalSubmitInteractionCreate),
 ) (*Client, error) {
 	client := &Client{
-		logger:        logger.With(slog.String("component", "discord")),
-		cfg:           cfg,
-		commandHandle: commandHandler,
+		logger:             logger.With(slog.String("component", "discord")),
+		cfg:                cfg,
+		commandHandle:      commandHandler,
+		autocompleteHandle: autocompleteHandler,
+		componentHandle:    componentHandler,
+		modalHandle:        modalHandler,
 	}
 
 	// build disgo client with the provided config and logger
@@ -52,6 +61,9 @@ func New(
 			gateway.IntentGuildVoiceStates,
 		)),
 		bot.WithEventListenerFunc(client.onApplicationCommand),
+		bot.WithEventListenerFunc(client.onAutocomplete),
+		bot.WithEventListenerFunc(client.onComponent),
+		bot.WithEventListenerFunc(client.onModal),
 		bot.WithEventListenerFunc(client.onVoiceStateUpdate),
 		bot.WithEventListenerFunc(client.onVoiceServerUpdate),
 	}
@@ -149,6 +161,34 @@ func (c *Client) LeaveVoiceChannel(ctx context.Context, guildID string) error {
 	return c.raw.UpdateVoiceState(ctx, parsedGuildID, nil, false, false)
 }
 
+func (c *Client) UserVoiceChannelID(ctx context.Context, guildID string, userID string) (*string, error) {
+	parsedGuildID, err := snowflake.Parse(guildID)
+	if err != nil {
+		return nil, fmt.Errorf("parse guild id: %w", err)
+	}
+
+	parsedUserID, err := snowflake.Parse(userID)
+	if err != nil {
+		return nil, fmt.Errorf("parse user id: %w", err)
+	}
+
+	if voiceState, ok := c.raw.Caches.VoiceState(parsedGuildID, parsedUserID); ok && voiceState.ChannelID != nil {
+		value := voiceState.ChannelID.String()
+		return &value, nil
+	}
+
+	voiceState, err := c.raw.Rest.GetUserVoiceState(parsedGuildID, parsedUserID)
+	if err != nil || voiceState == nil || voiceState.ChannelID == nil {
+		if err != nil {
+			return nil, fmt.Errorf("get user voice state: %w", err)
+		}
+		return nil, nil
+	}
+
+	value := voiceState.ChannelID.String()
+	return &value, nil
+}
+
 func (c *Client) CurrentVoiceChannelID(_ context.Context, guildID string) (*string, error) {
 	parsedGuildID, err := snowflake.Parse(guildID)
 	if err != nil {
@@ -197,6 +237,24 @@ func (c *Client) BotID() string {
 func (c *Client) onApplicationCommand(event *events.ApplicationCommandInteractionCreate) {
 	if c.commandHandle != nil {
 		c.commandHandle(event)
+	}
+}
+
+func (c *Client) onAutocomplete(event *events.AutocompleteInteractionCreate) {
+	if c.autocompleteHandle != nil {
+		c.autocompleteHandle(event)
+	}
+}
+
+func (c *Client) onComponent(event *events.ComponentInteractionCreate) {
+	if c.componentHandle != nil {
+		c.componentHandle(event)
+	}
+}
+
+func (c *Client) onModal(event *events.ModalSubmitInteractionCreate) {
+	if c.modalHandle != nil {
+		c.modalHandle(event)
 	}
 }
 

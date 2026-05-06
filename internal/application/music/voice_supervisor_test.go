@@ -43,6 +43,18 @@ func (f *fakeDiscordGateway) LeaveVoiceChannel(context.Context, string) error {
 	return nil
 }
 
+func (f *fakeDiscordGateway) UserVoiceChannelID(context.Context, string, string) (*string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.channelID == nil {
+		return nil, nil
+	}
+
+	value := *f.channelID
+	return &value, nil
+}
+
 func (f *fakeDiscordGateway) CurrentVoiceChannelID(context.Context, string) (*string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

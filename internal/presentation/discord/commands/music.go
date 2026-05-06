@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -12,9 +11,10 @@ import (
 	"github.com/disgoorg/snowflake/v2"
 
 	musicapp "pluggercat/internal/application/music"
-	domainmusic "pluggercat/internal/domain/music"
 	"pluggercat/internal/ports"
 	discordrouter "pluggercat/internal/presentation/discord/router"
+	musicui "pluggercat/internal/presentation/discord/ui/music"
+	"pluggercat/internal/presentation/discord/ui/pagination"
 )
 
 func RegisterMusic(
@@ -22,7 +22,11 @@ func RegisterMusic(
 	service *musicapp.Service,
 	discordGateway ports.DiscordGateway,
 	voiceSupervisor *musicapp.VoiceSupervisor,
+	pager *pagination.Manager,
 ) {
+	queueUI := musicui.NewQueueManager(service, voiceSupervisor, pager)
+	router.RegisterModalPrefix(musicui.QueueModalPrefix, queueUI.HandleModal)
+
 	router.Register(
 		"play",
 		discord.SlashCommandCreate{
@@ -30,8 +34,83 @@ func RegisterMusic(
 			Description: "plays a track from a URL or search query",
 			Options: []discord.ApplicationCommandOption{
 				discord.ApplicationCommandOptionString{
+					Name:         "query",
+					Description:  "URL or search query",
+					Required:     true,
+					Autocomplete: true,
+				},
+			},
+		},
+		func(event *events.ApplicationCommandInteractionCreate) error {
+			guildID, ok := requireGuild(event)
+			if !ok {
+				return nil
+			}
+
+			channelID, err := discordGateway.UserVoiceChannelID(context.Background(), guildID.String(), event.User().ID.String())
+			if err != nil || channelID == nil {
+				return ephemeralMessage(event, "You must be in a voice channel to use `/play`.")
+			}
+
+			query := strings.TrimSpace(event.SlashCommandInteractionData().String("query"))
+			if query == "" {
+				return ephemeralMessage(event, "You must specify a URL or search query.")
+			}
+
+			if err := discordGateway.JoinVoiceChannel(context.Background(), guildID.String(), *channelID); err != nil {
+				return ephemeralMessage(event, "You could not join your voice channel.")
+			}
+
+			track, started, err := service.Enqueue(context.Background(), guildID.String(), query)
+			if err != nil {
+				if errors.Is(err, musicapp.ErrNoTracksFound) {
+					return ephemeralMessage(event, "I could not find any results for that search.")
+				}
+				if errors.Is(err, musicapp.ErrAutocompleteSelectionExpired) {
+					return ephemeralMessage(event, "That suggestion expired. Please run `/play` again and choose a fresh result.")
+				}
+				return ephemeralMessage(event, "You could not add that track to the queue.")
+			}
+
+			title := "Added to Queue"
+			if started {
+				voiceSupervisor.OnPlaybackStarted(guildID.String())
+				title = "Now Playing"
+			}
+
+			return event.CreateMessage(
+				discord.NewMessageCreate().
+					WithEmbeds(musicui.BuildPlaybackEmbed(title, track, "Requested by "+event.User().EffectiveName())),
+			)
+		},
+	)
+
+	router.RegisterAutocomplete("play", func(event *events.AutocompleteInteractionCreate) error {
+		query := strings.TrimSpace(event.Data.String("query"))
+		if query == "" {
+			return event.AutocompleteResult([]discord.AutocompleteChoice{})
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		suggestions, err := service.Autocomplete(ctx, event.User().ID.String(), query, 10)
+		if err != nil {
+			return err
+		}
+
+		return event.AutocompleteResult(musicui.AutocompleteChoicesFromSuggestions(suggestions))
+	})
+
+	router.Register(
+		"search",
+		discord.SlashCommandCreate{
+			Name:        "search",
+			Description: "Searches tracks and lets you pick one from a paginated result view",
+			Options: []discord.ApplicationCommandOption{
+				discord.ApplicationCommandOptionString{
 					Name:        "query",
-					Description: "URL or search query",
+					Description: "Song name or URL",
 					Required:    true,
 				},
 			},
@@ -42,37 +121,105 @@ func RegisterMusic(
 				return nil
 			}
 
-			channelID, ok := userVoiceChannelID(event, *guildID)
-			if !ok {
-				return ephemeralMessage(event, "You must be in a voice channel to use `/play`.")
-			}
-
 			query := strings.TrimSpace(event.SlashCommandInteractionData().String("query"))
 			if query == "" {
-				return ephemeralMessage(event, "You must specify a URL or search query.")
+				return ephemeralMessage(event, "You must specify a song name or URL.")
 			}
 
-			if err := discordGateway.JoinVoiceChannel(context.Background(), guildID.String(), channelID.String()); err != nil {
-				return ephemeralMessage(event, "You could not join your voice channel.")
+			if err := event.DeferCreateMessage(false); err != nil {
+				return err
 			}
 
-			track, started, err := service.Enqueue(context.Background(), guildID.String(), query)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			tracks, err := service.Search(ctx, query)
 			if err != nil {
 				if errors.Is(err, musicapp.ErrNoTracksFound) {
-					return ephemeralMessage(event, "I could not find any results for that search.")
+					return updateInteractionResponse(event, discord.NewMessageUpdate().WithContent("I could not find any results for that search."))
 				}
-				return ephemeralMessage(event, "You could not add that track to the queue.")
+				return updateInteractionResponse(event, discord.NewMessageUpdate().WithContent("I could not complete that search right now."))
 			}
 
-			message := fmt.Sprintf("Added to the queue: %s", formatTrack(track))
-			if started {
-				voiceSupervisor.OnPlaybackStarted(guildID.String())
-				message = fmt.Sprintf("Now playing: %s", formatTrack(track))
+			session := &pagination.Session{
+				OwnerID: event.User().ID.String(),
+				Render: func(page int) (pagination.RenderedPage, error) {
+					return musicui.BuildSearchPage(query, tracks, page), nil
+				},
+				OnSelect: func(componentEvent *events.ComponentInteractionCreate, value string) (*pagination.InteractionResult, error) {
+					track, found := musicui.TrackFromSelection(tracks, value)
+					if !found {
+						return &pagination.InteractionResult{
+							Update: messageUpdateWithContent("That search result is no longer available."),
+							Close:  true,
+						}, nil
+					}
+
+					actionCtx, actionCancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer actionCancel()
+
+					channelID, err := discordGateway.UserVoiceChannelID(actionCtx, guildID.String(), componentEvent.User().ID.String())
+					if err != nil || channelID == nil {
+						if createErr := componentEvent.CreateMessage(
+							discord.NewMessageCreate().
+								WithContent("You must be in a voice channel to play a search result.").
+								WithEphemeral(true),
+						); createErr != nil {
+							return nil, createErr
+						}
+						return &pagination.InteractionResult{Handled: true}, nil
+					}
+
+					if err := discordGateway.JoinVoiceChannel(actionCtx, guildID.String(), *channelID); err != nil {
+						if createErr := componentEvent.CreateMessage(
+							discord.NewMessageCreate().
+								WithContent("I could not join your voice channel.").
+								WithEphemeral(true),
+						); createErr != nil {
+							return nil, createErr
+						}
+						return &pagination.InteractionResult{Handled: true}, nil
+					}
+
+					queuedTrack, started, err := service.EnqueueTrack(actionCtx, guildID.String(), track)
+					if err != nil {
+						if createErr := componentEvent.CreateMessage(
+							discord.NewMessageCreate().
+								WithContent("I could not queue that track.").
+								WithEphemeral(true),
+						); createErr != nil {
+							return nil, createErr
+						}
+						return &pagination.InteractionResult{Handled: true}, nil
+					}
+
+					title := "Added to Queue"
+					if started {
+						voiceSupervisor.OnPlaybackStarted(guildID.String())
+						title = "Now Playing"
+					}
+
+					update := discord.NewMessageUpdate().WithEmbeds(
+						musicui.BuildPlaybackEmbed(title, queuedTrack, "Requested by "+componentEvent.User().EffectiveName()),
+					)
+					return &pagination.InteractionResult{
+						Update: &update,
+						Close:  true,
+					}, nil
+				},
 			}
 
-			return event.CreateMessage(
-				discord.NewMessageCreate().
-					WithContent(message),
+			message, err := pager.CreateMessage(session)
+			if err != nil {
+				return updateInteractionResponse(event, discord.NewMessageUpdate().WithContent("I could not build the search view right now."))
+			}
+
+			return updateInteractionResponse(
+				event,
+				discord.NewMessageUpdate().
+					WithContent(message.Content).
+					WithEmbeds(message.Embeds...).
+					WithComponents(message.Components...),
 			)
 		},
 	)
@@ -93,11 +240,21 @@ func RegisterMusic(
 			if err != nil {
 				return ephemeralMessage(event, "I could not read the current queue.")
 			}
+			if queue.Current == nil && len(queue.Upcoming) == 0 {
+				return event.CreateMessage(
+					discord.NewMessageCreate().
+						WithEmbeds(musicui.BuildQueueEmptyEmbed()),
+				)
+			}
 
-			return event.CreateMessage(
-				discord.NewMessageCreate().
-					WithContent(formatQueue(queue)),
+			message, err := pager.CreateMessage(
+				queueUI.NewSession(guildID.String(), event.User().ID.String()),
 			)
+			if err != nil {
+				return ephemeralMessage(event, "I could not build the queue view right now.")
+			}
+
+			return event.CreateMessage(message)
 		},
 	)
 
@@ -175,17 +332,18 @@ func RegisterMusic(
 				return ephemeralMessage(event, "You could not skip the current track.")
 			}
 
-			message := "Track skipped. The queue is now empty."
 			if hasNext {
 				voiceSupervisor.OnPlaybackStarted(guildID.String())
-				message = fmt.Sprintf("Skipping. Now playing: %s", formatTrack(nextTrack))
-			} else {
-				voiceSupervisor.OnQueueDrained(guildID.String())
+				return event.CreateMessage(
+					discord.NewMessageCreate().
+						WithEmbeds(musicui.BuildPlaybackEmbed("Now Playing", nextTrack, "Skipped by "+event.User().EffectiveName())),
+				)
 			}
 
+			voiceSupervisor.OnQueueDrained(guildID.String())
 			return event.CreateMessage(
 				discord.NewMessageCreate().
-					WithContent(message),
+					WithContent("Track skipped. The queue is now empty."),
 			)
 		},
 	)
@@ -227,21 +385,6 @@ func requireGuild(event *events.ApplicationCommandInteractionCreate) (*snowflake
 	return guildID, true
 }
 
-func userVoiceChannelID(event *events.ApplicationCommandInteractionCreate, guildID snowflake.ID) (*snowflake.ID, bool) {
-	userID := event.User().ID
-
-	if voiceState, ok := event.Client().Caches.VoiceState(guildID, userID); ok && voiceState.ChannelID != nil {
-		return voiceState.ChannelID, true
-	}
-
-	voiceState, err := event.Client().Rest.GetUserVoiceState(guildID, userID)
-	if err != nil || voiceState == nil || voiceState.ChannelID == nil {
-		return nil, false
-	}
-
-	return voiceState.ChannelID, true
-}
-
 func ephemeralMessage(event *events.ApplicationCommandInteractionCreate, content string) error {
 	return event.CreateMessage(
 		discord.NewMessageCreate().
@@ -250,58 +393,12 @@ func ephemeralMessage(event *events.ApplicationCommandInteractionCreate, content
 	)
 }
 
-func formatQueue(queue domainmusic.Queue) string {
-	if queue.Current == nil && len(queue.Upcoming) == 0 {
-		return "The queue is empty."
-	}
-
-	lines := []string{}
-	if queue.Current != nil {
-		lines = append(lines, "Now playing: "+formatTrack(*queue.Current))
-	} else {
-		lines = append(lines, "Now playing: nothing yet")
-	}
-
-	if queue.Paused {
-		lines = append(lines, "Status: paused")
-	}
-
-	if len(queue.Upcoming) == 0 {
-		lines = append(lines, "Next: no tracks in queue")
-		return strings.Join(lines, "\n")
-	}
-
-	lines = append(lines, fmt.Sprintf("Next: %d track(s)", len(queue.Upcoming)))
-	for i, track := range queue.Upcoming {
-		if i == 5 {
-			lines = append(lines, fmt.Sprintf("... and %d more", len(queue.Upcoming)-5))
-			break
-		}
-		lines = append(lines, fmt.Sprintf("%d. %s", i+1, formatTrack(track)))
-	}
-
-	return strings.Join(lines, "\n")
+func updateInteractionResponse(event *events.ApplicationCommandInteractionCreate, update discord.MessageUpdate) error {
+	_, err := event.Client().Rest.UpdateInteractionResponse(event.ApplicationID(), event.Token(), update)
+	return err
 }
 
-func formatTrack(track domainmusic.Track) string {
-	duration := formatDuration(track.Duration)
-	if track.Author == "" {
-		return fmt.Sprintf("%s (%s)", track.Title, duration)
-	}
-	return fmt.Sprintf("%s - %s (%s)", track.Author, track.Title, duration)
-}
-
-func formatDuration(duration time.Duration) string {
-	if duration <= 0 {
-		return "unknown duration"
-	}
-
-	hours := int(duration.Hours())
-	minutes := int(duration.Minutes()) % 60
-	seconds := int(duration.Seconds()) % 60
-
-	if hours > 0 {
-		return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
-	}
-	return fmt.Sprintf("%02d:%02d", minutes, seconds)
+func messageUpdateWithContent(content string) *discord.MessageUpdate {
+	update := discord.NewMessageUpdate().WithContent(content)
+	return &update
 }

@@ -14,6 +14,7 @@ import (
 	"pluggercat/internal/ports"
 	discordcommands "pluggercat/internal/presentation/discord/commands"
 	discordrouter "pluggercat/internal/presentation/discord/router"
+	"pluggercat/internal/presentation/discord/ui/pagination"
 )
 
 type App struct {
@@ -26,8 +27,17 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	logger = logger.With(slog.String("app", cfg.App.Name))
 
 	router := discordrouter.New(logger)
+	pager := pagination.New(logger, 0)
+	router.RegisterComponentPrefix(pagination.Prefix, pager.HandleComponent)
 
-	discordClient, err := disgoadapter.New(cfg.Discord, logger, router.Handle)
+	discordClient, err := disgoadapter.New(
+		cfg.Discord,
+		logger,
+		router.Handle,
+		router.HandleAutocomplete,
+		router.HandleComponent,
+		router.HandleModal,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("create discord adapter: %w", err)
 	}
@@ -77,7 +87,7 @@ func New(cfg config.Config, logger *slog.Logger) (*App, error) {
 	})
 
 	discordcommands.RegisterBase(router)
-	discordcommands.RegisterMusic(router, musicService, discordClient, voiceSupervisor)
+	discordcommands.RegisterMusic(router, musicService, discordClient, voiceSupervisor, pager)
 	discordClient.SetCommands(router.Commands())
 
 	return &App{

@@ -12,6 +12,7 @@ type DiscordGateway interface {
 	SyncCommands(ctx context.Context) error
 	JoinVoiceChannel(ctx context.Context, guildID string, channelID string) error
 	LeaveVoiceChannel(ctx context.Context, guildID string) error
+	UserVoiceChannelID(ctx context.Context, guildID string, userID string) (*string, error)
 	CurrentVoiceChannelID(ctx context.Context, guildID string) (*string, error)
 	CountHumanMembersInVoiceChannel(ctx context.Context, guildID string, channelID string) (int, error)
 	AddVoiceStateHandler(handler VoiceStateHandler)

@@ -115,33 +115,19 @@ func (c *Client) SearchTracks(ctx context.Context, query string) ([]domainmusic.
 		return nil, err
 	}
 
-	result, err := node.LoadTracks(ctx, normalizeQuery(query))
-	if err != nil {
-		return nil, fmt.Errorf("load tracks: %w", err)
+	var lastErr error
+	for _, identifier := range candidateIdentifiers(query) {
+		tracks, found, err := c.loadTracks(ctx, node, identifier)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if found {
+			return tracks, nil
+		}
 	}
 
-	switch data := result.Data.(type) {
-	case lavalink.Track:
-		return []domainmusic.Track{mapTrack(data)}, nil
-	case lavalink.Search:
-		tracks := make([]domainmusic.Track, 0, len(data))
-		for _, track := range data {
-			tracks = append(tracks, mapTrack(track))
-		}
-		return tracks, nil
-	case lavalink.Playlist:
-		tracks := make([]domainmusic.Track, 0, len(data.Tracks))
-		for _, track := range data.Tracks {
-			tracks = append(tracks, mapTrack(track))
-		}
-		return tracks, nil
-	case lavalink.Empty:
-		return nil, nil
-	case lavalink.Exception:
-		return nil, data
-	default:
-		return nil, fmt.Errorf("unsupported lavalink load result: %T", data)
-	}
+	return nil, lastErr
 }
 
 // joins the specified voice channel in the specified guild by updating the bot's voice state
@@ -238,12 +224,24 @@ func (c *Client) readyNode() (disgolink.Node, error) {
 
 // maps a lavalink track to a domain music track by extracting the relevant information from the lavalink track and returning a new domain music track with the mapped fields
 func mapTrack(track lavalink.Track) domainmusic.Track {
+	artwork := ""
+	if track.Info.ArtworkURL != nil {
+		artwork = *track.Info.ArtworkURL
+	}
+
+	isrc := ""
+	if track.Info.ISRC != nil {
+		isrc = *track.Info.ISRC
+	}
+
 	return domainmusic.Track{
 		ID:        track.Info.Identifier,
 		Title:     track.Info.Title,
 		Author:    track.Info.Author,
 		URL:       trackURL(track),
 		Source:    track.Info.SourceName,
+		Artwork:   artwork,
+		ISRC:      isrc,
 		Duration:  time.Duration(track.Info.Length.Milliseconds()) * time.Millisecond,
 		Reference: track.Encoded,
 	}
@@ -263,15 +261,48 @@ func trackURL(track lavalink.Track) string {
 	return ""
 }
 
-func normalizeQuery(query string) string {
+func candidateIdentifiers(query string) []string {
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return query
+		return nil
 	}
 	if isDirectURL(query) || searchPrefixPattern.MatchString(strings.ToLower(query)) {
-		return query
+		return []string{query}
 	}
-	return "ytsearch:" + query
+	return []string{
+		"ytmsearch:" + query,
+		"ytsearch:" + query,
+	}
+}
+
+func (c *Client) loadTracks(ctx context.Context, node disgolink.Node, identifier string) ([]domainmusic.Track, bool, error) {
+	result, err := node.LoadTracks(ctx, identifier)
+	if err != nil {
+		return nil, false, fmt.Errorf("load tracks %q: %w", identifier, err)
+	}
+
+	switch data := result.Data.(type) {
+	case lavalink.Track:
+		return []domainmusic.Track{mapTrack(data)}, true, nil
+	case lavalink.Search:
+		tracks := make([]domainmusic.Track, 0, len(data))
+		for _, track := range data {
+			tracks = append(tracks, mapTrack(track))
+		}
+		return tracks, len(tracks) > 0, nil
+	case lavalink.Playlist:
+		tracks := make([]domainmusic.Track, 0, len(data.Tracks))
+		for _, track := range data.Tracks {
+			tracks = append(tracks, mapTrack(track))
+		}
+		return tracks, len(tracks) > 0, nil
+	case lavalink.Empty:
+		return nil, false, nil
+	case lavalink.Exception:
+		return nil, false, data
+	default:
+		return nil, false, fmt.Errorf("unsupported lavalink load result for %q: %T", identifier, data)
+	}
 }
 
 func isDirectURL(value string) bool {
