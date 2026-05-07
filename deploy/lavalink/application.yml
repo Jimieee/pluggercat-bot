@@ -52,7 +52,7 @@ lavalink:
 
 plugins:
   youtube:
-    enabled: true
+    enabled: ${YOUTUBE_SOURCE_ENABLED:false}
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
@@ -80,7 +80,6 @@ plugins:
   lavasrc:
     providers:
       - "ytsearch:\"%ISRC%\""
-      - "ytmsearch:%QUERY%"
       - "ytsearch:%QUERY%"
     sources:
       spotify: ${LAVASRC_ENABLE_SPOTIFY:false}
@@ -92,7 +91,7 @@ plugins:
       vkmusic: false
       tidal: false
       qobuz: false
-      ytdlp: false
+      ytdlp: ${LAVASRC_ENABLE_YTDLP:true}
       jiosaavn: false
     spotify:
       clientId: "${LAVASRC_SPOTIFY_CLIENT_ID:}"
@@ -115,6 +114,11 @@ plugins:
       formats:
         - "MP3_320"
         - "MP3_128"
+    ytdlp:
+      path: "${LAVASRC_YTDLP_PATH:/usr/local/bin/yt-dlp}"
+      searchLimit: ${LAVASRC_YTDLP_SEARCH_LIMIT:10}
+      mixPlaylistLoadLimit: ${LAVASRC_YTDLP_MIX_PLAYLIST_LOAD_LIMIT:25}
+      playlistLoadLimit: ${LAVASRC_YTDLP_PLAYLIST_LOAD_LIMIT:1000}
 
 metrics:
   prometheus:

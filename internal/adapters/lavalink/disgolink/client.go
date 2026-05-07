@@ -126,7 +126,7 @@ func (c *Client) LoadTracks(ctx context.Context, query string) (domainmusic.Load
 	}
 
 	var lastErr error
-	for _, identifier := range candidateIdentifiers(query) {
+	for _, identifier := range candidateIdentifiers(query, c.cfg.YouTubeBackend) {
 		result, found, err := c.loadTracks(ctx, node, identifier)
 		if err != nil {
 			lastErr = err
@@ -274,14 +274,27 @@ func trackURL(track lavalink.Track) string {
 	return ""
 }
 
-func candidateIdentifiers(query string) []string {
+func candidateIdentifiers(query string, backend config.YouTubeBackend) []string {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil
 	}
-	if isDirectURL(query) || searchPrefixPattern.MatchString(strings.ToLower(query)) {
+	if isDirectURL(query) {
 		return []string{query}
 	}
+
+	lowerQuery := strings.ToLower(query)
+	if searchPrefixPattern.MatchString(lowerQuery) {
+		if backend == config.YouTubeBackendYTDLP && strings.HasPrefix(lowerQuery, "ytmsearch:") {
+			return []string{"ytsearch:" + strings.TrimSpace(query[len("ytmsearch:"):])}
+		}
+		return []string{query}
+	}
+
+	if backend == config.YouTubeBackendYTDLP {
+		return []string{"ytsearch:" + query}
+	}
+
 	return []string{
 		"ytmsearch:" + query,
 		"ytsearch:" + query,

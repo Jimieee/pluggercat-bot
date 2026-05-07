@@ -14,6 +14,13 @@ type Config struct {
 	Lavalink LavalinkConfig
 }
 
+type YouTubeBackend string
+
+const (
+	YouTubeBackendSource YouTubeBackend = "youtube-source"
+	YouTubeBackendYTDLP  YouTubeBackend = "ytdlp"
+)
+
 type AppConfig struct {
 	Name                     string
 	LogLevel                 string
@@ -27,11 +34,14 @@ type DiscordConfig struct {
 }
 
 type LavalinkConfig struct {
-	NodeName string
-	Address  string
-	Password string
-	Secure   bool
-	Enabled  bool
+	NodeName             string
+	Address              string
+	Password             string
+	Secure               bool
+	Enabled              bool
+	YouTubeBackend       YouTubeBackend
+	YouTubeSourceEnabled bool
+	YTDLPEnabled         bool
 }
 
 // Load reads configuration from environment variables and returns a Config struct. It validates required fields and applies default values where necessary.
@@ -39,6 +49,16 @@ func Load() (Config, error) {
 	discordToken, err := requiredEnv("DISCORD_TOKEN")
 	if err != nil {
 		return Config{}, err
+	}
+
+	youtubeSourceEnabled, err := boolEnvOrDefault("YOUTUBE_SOURCE_ENABLED", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse YOUTUBE_SOURCE_ENABLED: %w", err)
+	}
+
+	ytdlpEnabled, err := boolEnvOrDefault("LAVASRC_ENABLE_YTDLP", true)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse LAVASRC_ENABLE_YTDLP: %w", err)
 	}
 
 	// read config from env variables, applying defaults where appropriate
@@ -52,12 +72,20 @@ func Load() (Config, error) {
 			DevGuildID: os.Getenv("DISCORD_DEV_GUILD_ID"),
 		},
 		Lavalink: LavalinkConfig{
-			NodeName: envOrDefault("LAVALINK_NODE_NAME", "main"),
-			Address:  os.Getenv("LAVALINK_ADDRESS"),
-			Password: os.Getenv("LAVALINK_PASSWORD"),
-			Secure:   false,
+			NodeName:             envOrDefault("LAVALINK_NODE_NAME", "main"),
+			Address:              os.Getenv("LAVALINK_ADDRESS"),
+			Password:             os.Getenv("LAVALINK_PASSWORD"),
+			Secure:               false,
+			YouTubeSourceEnabled: youtubeSourceEnabled,
+			YTDLPEnabled:         ytdlpEnabled,
 		},
 	}
+
+	youtubeBackend, err := parseYouTubeBackend(envOrDefault("YOUTUBE_BACKEND", string(YouTubeBackendYTDLP)))
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Lavalink.YouTubeBackend = youtubeBackend
 
 	queueIdleDisconnectAfter, err := durationEnvOrDefault("VOICE_QUEUE_IDLE_DISCONNECT_AFTER", 3*time.Minute)
 	if err != nil {
@@ -84,6 +112,10 @@ func Load() (Config, error) {
 
 	// if Lavalink address and password are set, enable Lavalink integration, otherwise disable it
 	cfg.Lavalink.Enabled = cfg.Lavalink.Address != "" && cfg.Lavalink.Password != ""
+
+	if err := validateYouTubeBackend(cfg.Lavalink); err != nil {
+		return cfg, err
+	}
 
 	return cfg, nil
 }
@@ -126,4 +158,40 @@ func lookupBool(key string) (bool, bool, error) {
 		return false, true, err
 	}
 	return value, true, nil
+}
+
+func boolEnvOrDefault(key string, fallback bool) (bool, error) {
+	value, found, err := lookupBool(key)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return fallback, nil
+	}
+	return value, nil
+}
+
+func parseYouTubeBackend(value string) (YouTubeBackend, error) {
+	switch normalized := strings.ToLower(strings.TrimSpace(value)); normalized {
+	case string(YouTubeBackendSource):
+		return YouTubeBackendSource, nil
+	case string(YouTubeBackendYTDLP):
+		return YouTubeBackendYTDLP, nil
+	default:
+		return "", fmt.Errorf("YOUTUBE_BACKEND must be %q or %q", YouTubeBackendSource, YouTubeBackendYTDLP)
+	}
+}
+
+func validateYouTubeBackend(cfg LavalinkConfig) error {
+	switch cfg.YouTubeBackend {
+	case YouTubeBackendSource:
+		if !cfg.YouTubeSourceEnabled {
+			return fmt.Errorf("YOUTUBE_BACKEND=%q requires YOUTUBE_SOURCE_ENABLED=true", cfg.YouTubeBackend)
+		}
+	case YouTubeBackendYTDLP:
+		if !cfg.YTDLPEnabled {
+			return fmt.Errorf("YOUTUBE_BACKEND=%q requires LAVASRC_ENABLE_YTDLP=true", cfg.YouTubeBackend)
+		}
+	}
+	return nil
 }

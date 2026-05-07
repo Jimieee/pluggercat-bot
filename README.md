@@ -12,7 +12,9 @@ It uses Lavalink as its audio backend and `LavaSrc` for extra source resolution.
 
 ## Supported playback sources
 
-- YouTube and YouTube Music through `youtube-source`
+- YouTube through a configurable backend:
+  - `LavaSrc + yt-dlp` for direct playback, recommended on VPS
+  - `youtube-source` as an optional alternative when you want to experiment with OAuth / poToken / remote cipher
 - SoundCloud through Lavalink
 - Spotify links through `LavaSrc` when Spotify is enabled
 - Apple Music links through `LavaSrc` when Apple Music is enabled
@@ -32,7 +34,7 @@ LAVASRC_SPOTIFY_CLIENT_ID=your_spotify_client_id
 LAVASRC_SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
 ```
 
-Spotify playback is mirrored. In practice that means `LavaSrc` resolves Spotify metadata and then uses the configured providers, which in this project default to `ytmsearch` and `ytsearch`.
+Spotify playback is mirrored. In practice that means `LavaSrc` resolves Spotify metadata and then uses the configured providers, which in this project default to `ytsearch`.
 
 ### Apple Music
 
@@ -57,18 +59,31 @@ LAVASRC_DEEZER_ARL=your_deezer_arl_cookie
 
 Deezer is the direct source in this stack. If you do not provide both credentials, Deezer links should remain disabled.
 
-## YouTube on VPS
+## YouTube strategy
 
-For VPS and datacenter IPs, the recommended `youtube-source` stack is:
+As of `2026-05-06`, the more robust VPS-friendly path in this repository is `LavaSrc + yt-dlp`.
+The `lavalink` service is now built from [deploy/lavalink/Dockerfile](/home/jimie/code/go/pluggercat/deploy/lavalink/Dockerfile:1), which pins a `yt-dlp` Linux binary inside the container so the `LavaSrc` `ytdlp` source can handle YouTube URLs, playlists and searches directly.
 
-- `TV` client for authenticated playback with OAuth
-- `remoteCipher` enabled for signature deciphering
-
-This repository now wires a `yt-cipher` service into `docker-compose.yml` and points Lavalink to it by default. That follows the current `youtube-source` guidance that YouTube cipher changes are becoming more frequent and complex, so remote ciphering is the safer path when local extraction breaks.
-
-Relevant `.env` values:
+Recommended `.env` values:
 
 ```env
+YOUTUBE_BACKEND=ytdlp
+YOUTUBE_SOURCE_ENABLED=false
+LAVASRC_ENABLE_YTDLP=true
+LAVASRC_YTDLP_VERSION=2026.03.17
+```
+
+If you want to try `youtube-source` anyway, keep these expectations in mind:
+
+- OAuth, poToken and remote cipher are still optional integrations, not guaranteed fixes
+- `TV` is the OAuth-compatible playback client in `youtube-source`
+- YouTube player and cipher changes can still break playback on datacenter IPs
+
+Relevant optional `youtube-source` values:
+
+```env
+YOUTUBE_SOURCE_ENABLED=true
+YOUTUBE_BACKEND=youtube-source
 YOUTUBE_OAUTH_ENABLED=true
 YOUTUBE_OAUTH_REFRESH_TOKEN=your_refresh_token
 YOUTUBE_REMOTE_CIPHER_URL=http://yt-cipher:8001
@@ -76,8 +91,8 @@ YOUTUBE_REMOTE_CIPHER_PASSWORD=pluggercat-yt-cipher
 YOUTUBE_REMOTE_CIPHER_USER_AGENT=pluggercat
 ```
 
-After changing YouTube or source settings, recreate Lavalink:
+After changing YouTube strategy or source settings, rebuild and recreate Lavalink:
 
 ```bash
-docker compose up -d --force-recreate lavalink
+docker compose up -d --build --force-recreate lavalink
 ```
