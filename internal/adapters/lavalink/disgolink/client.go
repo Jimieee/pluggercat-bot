@@ -24,6 +24,7 @@ var _ ports.AudioBackend = (*Client)(nil)
 var ErrLavalinkNotConfigured = errors.New("lavalink is not configured")
 
 var searchPrefixPattern = regexp.MustCompile(`^[a-z0-9]+search:`)
+var markdownLinkPattern = regexp.MustCompile(`^\[[^\]]+\]\((https?://[^)]+)\)$`)
 
 type Client struct {
 	logger *slog.Logger
@@ -275,7 +276,7 @@ func trackURL(track lavalink.Track) string {
 }
 
 func candidateIdentifiers(query string, backend config.YouTubeBackend) []string {
-	query = strings.TrimSpace(query)
+	query = normalizeInputQuery(query)
 	if query == "" {
 		return nil
 	}
@@ -299,6 +300,23 @@ func candidateIdentifiers(query string, backend config.YouTubeBackend) []string 
 		"ytmsearch:" + query,
 		"ytsearch:" + query,
 	}
+}
+
+func normalizeInputQuery(query string) string {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(trimmed, "<") && strings.HasSuffix(trimmed, ">") {
+		trimmed = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(trimmed, "<"), ">"))
+	}
+
+	if matches := markdownLinkPattern.FindStringSubmatch(trimmed); len(matches) == 2 {
+		return strings.TrimSpace(matches[1])
+	}
+
+	return trimmed
 }
 
 func (c *Client) loadTracks(ctx context.Context, node disgolink.Node, identifier string) (domainmusic.LoadResult, bool, error) {

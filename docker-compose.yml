@@ -47,6 +47,7 @@ services:
       dockerfile: deploy/lavalink/Dockerfile
       args:
         YTDLP_VERSION: ${LAVASRC_YTDLP_VERSION:-2026.03.17}
+        YTDLP_RELEASE_FILE: ${LAVASRC_YTDLP_RELEASE_FILE:-yt-dlp_musllinux}
     image: pluggercat-lavalink:local
     restart: unless-stopped
     depends_on:
@@ -77,6 +78,7 @@ services:
       LAVASRC_DEEZER_ARL: ${LAVASRC_DEEZER_ARL:-}
       LAVASRC_ENABLE_YTDLP: ${LAVASRC_ENABLE_YTDLP:-true}
       LAVASRC_YTDLP_PATH: ${LAVASRC_YTDLP_PATH:-/usr/local/bin/yt-dlp}
+      LAVASRC_YTDLP_COOKIES_FILE: ${LAVASRC_YTDLP_COOKIES_FILE:-/opt/Lavalink/secrets/youtube-cookies.txt}
       LAVASRC_YTDLP_SEARCH_LIMIT: ${LAVASRC_YTDLP_SEARCH_LIMIT:-10}
       LAVASRC_YTDLP_MIX_PLAYLIST_LOAD_LIMIT: ${LAVASRC_YTDLP_MIX_PLAYLIST_LOAD_LIMIT:-25}
       LAVASRC_YTDLP_PLAYLIST_LOAD_LIMIT: ${LAVASRC_YTDLP_PLAYLIST_LOAD_LIMIT:-1000}
@@ -90,6 +92,7 @@ services:
       YOUTUBE_REMOTE_CIPHER_USER_AGENT: ${YOUTUBE_REMOTE_CIPHER_USER_AGENT:-pluggercat}
     volumes:
       - ./deploy/lavalink/application.yml:/opt/Lavalink/application.yml:ro
+      - ./deploy/lavalink/secrets:/opt/Lavalink/secrets:ro
     ports:
       - "127.0.0.1:2333:2333"
     expose:

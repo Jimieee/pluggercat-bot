@@ -38,6 +38,18 @@ func TestCandidateIdentifiers(t *testing.T) {
 			backend: config.YouTubeBackendYTDLP,
 			want:    []string{"https://youtu.be/dQw4w9WgXcQ"},
 		},
+		{
+			name:    "markdown links normalize to url",
+			query:   "[Never Gonna Give You Up](https://youtu.be/dQw4w9WgXcQ)",
+			backend: config.YouTubeBackendYTDLP,
+			want:    []string{"https://youtu.be/dQw4w9WgXcQ"},
+		},
+		{
+			name:    "angle bracket urls normalize to url",
+			query:   "<https://youtu.be/dQw4w9WgXcQ>",
+			backend: config.YouTubeBackendYTDLP,
+			want:    []string{"https://youtu.be/dQw4w9WgXcQ"},
+		},
 	}
 
 	for _, tc := range testCases {
