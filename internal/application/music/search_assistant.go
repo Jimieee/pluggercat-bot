@@ -94,6 +94,10 @@ func (a *searchAssistant) Suggest(
 		a.mu.Unlock()
 		return suggestions, nil
 	}
+	if suggestions, ok := a.reuseCachedPrefixSuggestionsLocked(userID, normalizedQuery, limit, now); ok {
+		a.mu.Unlock()
+		return suggestions, nil
+	}
 
 	if suggestions, ok := a.reuseRecentSuggestionsLocked(userID, normalizedQuery, limit, now); ok {
 		a.mu.Unlock()
@@ -214,6 +218,48 @@ func (a *searchAssistant) reuseRecentSuggestionsLocked(
 
 	a.rememberRecentLocked(userID, normalizedQuery, filtered, now)
 	return filtered, true
+}
+
+func (a *searchAssistant) reuseCachedPrefixSuggestionsLocked(
+	userID string,
+	normalizedQuery string,
+	limit int,
+	now time.Time,
+) ([]SearchSuggestion, bool) {
+	bestKey := ""
+	var filtered []SearchSuggestion
+
+	for key, cached := range a.cachedByQuery {
+		if !now.Before(cached.expiresAt) {
+			continue
+		}
+		if key == normalizedQuery || !strings.HasPrefix(normalizedQuery, key) {
+			continue
+		}
+
+		candidate := filterSuggestions(cached.suggestions, normalizedQuery, limit)
+		if len(candidate) == 0 {
+			continue
+		}
+		if len(key) <= len(bestKey) {
+			continue
+		}
+
+		bestKey = key
+		filtered = candidate
+	}
+
+	if len(filtered) == 0 {
+		return nil, false
+	}
+
+	copied := copySuggestions(filtered, len(filtered))
+	a.cachedByQuery[normalizedQuery] = cachedSuggestions{
+		suggestions: copied,
+		expiresAt:   now.Add(autocompleteSearchCacheTTL),
+	}
+	a.rememberRecentLocked(userID, normalizedQuery, copied, now)
+	return copySuggestions(copied, limit), true
 }
 
 func (a *searchAssistant) rememberRecentLocked(userID string, normalizedQuery string, suggestions []SearchSuggestion, now time.Time) {

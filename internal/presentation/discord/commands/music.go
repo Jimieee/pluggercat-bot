@@ -17,6 +17,8 @@ import (
 	"pluggercat/internal/presentation/discord/ui/pagination"
 )
 
+const playAutocompleteTimeout = 2800 * time.Millisecond
+
 func RegisterMusic(
 	router *discordrouter.Router,
 	service *musicapp.Service,
@@ -102,7 +104,7 @@ func RegisterMusic(
 			return event.AutocompleteResult([]discord.AutocompleteChoice{})
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), playAutocompleteTimeout)
 		defer cancel()
 
 		suggestions, err := service.Autocomplete(ctx, event.User().ID.String(), query, 10)

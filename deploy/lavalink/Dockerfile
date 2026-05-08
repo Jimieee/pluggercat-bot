@@ -19,7 +19,7 @@ RUN apk add --no-cache curl nodejs npm ffmpeg \
   'trap cleanup EXIT HUP INT TERM' \
   'COOKIES_FILE="${LAVASRC_YTDLP_COOKIES_FILE:-}"' \
   'if [ -n "$COOKIES_FILE" ] && [ -f "$COOKIES_FILE" ]; then' \
-  '  TMP_COOKIES="$(mktemp /tmp/yt-dlp-cookies.XXXXXX)"' \
+  '  TMP_COOKIES="$(mktemp -p /tmp yt-dlp-cookies.XXXXXX)"' \
   '  cp "$COOKIES_FILE" "$TMP_COOKIES"' \
   '  "$YTDLP_BIN" --js-runtimes node --remote-components ejs:github --cookies "$TMP_COOKIES" "$@"' \
   '  exit "$?"' \

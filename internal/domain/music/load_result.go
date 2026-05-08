@@ -46,6 +46,25 @@ func (r LoadResult) PlaybackOrder() []Track {
 	return reordered
 }
 
+// EnqueueOrder returns the tracks that should actually be queued for a user
+// request. Search-style results should only enqueue the primary match, while
+// real collections like playlists and albums keep their full playback order.
+func (r LoadResult) EnqueueOrder() []Track {
+	if len(r.Tracks) == 0 {
+		return nil
+	}
+
+	if r.Type == LoadResultTypePlaylist {
+		return r.PlaybackOrder()
+	}
+
+	primary, ok := r.PrimaryTrack()
+	if !ok {
+		return nil
+	}
+	return []Track{primary}
+}
+
 func (r LoadResult) PrimaryTrack() (Track, bool) {
 	ordered := r.PlaybackOrder()
 	if len(ordered) == 0 {

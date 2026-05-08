@@ -73,6 +73,55 @@ func TestAutocompleteSelectionEnqueuesExactTrack(t *testing.T) {
 	}
 }
 
+func TestAutocompleteReusesCachedPrefixSuggestions(t *testing.T) {
+	backend := &fakeAudioBackend{
+		searchResults: []domainmusic.Track{
+			{
+				ID:        "track-1",
+				Title:     "Foxy's Song",
+				Author:    "iTownGamePlay",
+				Duration:  212 * time.Second,
+				Reference: "encoded-1",
+				Source:    "youtube",
+			},
+			{
+				ID:        "track-2",
+				Title:     "Foxy Song Remake",
+				Author:    "iTownGamePlay",
+				Duration:  219 * time.Second,
+				Reference: "encoded-2",
+				Source:    "youtube",
+			},
+		},
+	}
+
+	service := NewService(memory.NewQueueRepository(), backend)
+
+	initial, err := service.Autocomplete(context.Background(), "user-1", "foxy", 10)
+	if err != nil {
+		t.Fatalf("initial autocomplete returned error: %v", err)
+	}
+	if len(initial) != 2 {
+		t.Fatalf("expected 2 initial suggestions, got %d", len(initial))
+	}
+	if backend.searchCalls != 1 {
+		t.Fatalf("expected 1 backend search call after initial query, got %d", backend.searchCalls)
+	}
+
+	backend.searchResults = nil
+
+	followUp, err := service.Autocomplete(context.Background(), "user-1", "foxy song", 10)
+	if err != nil {
+		t.Fatalf("follow-up autocomplete returned error: %v", err)
+	}
+	if len(followUp) != 1 {
+		t.Fatalf("expected cached prefix suggestions for extended query, got %d", len(followUp))
+	}
+	if backend.searchCalls != 1 {
+		t.Fatalf("expected no extra backend search call for cached prefix reuse, got %d", backend.searchCalls)
+	}
+}
+
 func TestAutocompleteSkipsDirectURLs(t *testing.T) {
 	backend := &fakeAudioBackend{
 		searchResults: []domainmusic.Track{

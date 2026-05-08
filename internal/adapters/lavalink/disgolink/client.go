@@ -325,7 +325,11 @@ func (c *Client) loadTracks(ctx context.Context, node disgolink.Node, identifier
 		return domainmusic.LoadResult{}, false, fmt.Errorf("load tracks %q: %w", identifier, err)
 	}
 
-	switch data := result.Data.(type) {
+	return mapLoadResult(identifier, result.Data)
+}
+
+func mapLoadResult(identifier string, data any) (domainmusic.LoadResult, bool, error) {
+	switch data := data.(type) {
 	case lavalink.Track:
 		return domainmusic.LoadResult{
 			Type:   domainmusic.LoadResultTypeTrack,
@@ -345,13 +349,22 @@ func (c *Client) loadTracks(ctx context.Context, node disgolink.Node, identifier
 		for _, track := range data.Tracks {
 			tracks = append(tracks, mapTrack(track))
 		}
-		return domainmusic.LoadResult{
-			Type:   domainmusic.LoadResultTypePlaylist,
-			Tracks: tracks,
-			Collection: &domainmusic.Collection{
+
+		loadType := domainmusic.LoadResultTypePlaylist
+		var collection *domainmusic.Collection
+		if isSearchIdentifier(identifier) {
+			loadType = domainmusic.LoadResultTypeSearch
+		} else {
+			collection = &domainmusic.Collection{
 				Name:          data.Info.Name,
 				SelectedTrack: data.Info.SelectedTrack,
-			},
+			}
+		}
+
+		return domainmusic.LoadResult{
+			Type:   loadType,
+			Tracks: tracks,
+			Collection: collection,
 		}, len(tracks) > 0, nil
 	case lavalink.Empty:
 		return domainmusic.LoadResult{}, false, nil
@@ -368,4 +381,8 @@ func isDirectURL(value string) bool {
 		return false
 	}
 	return parsed.Scheme == "http" || parsed.Scheme == "https"
+}
+
+func isSearchIdentifier(identifier string) bool {
+	return searchPrefixPattern.MatchString(strings.ToLower(strings.TrimSpace(identifier)))
 }

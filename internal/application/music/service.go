@@ -71,7 +71,7 @@ func (s *Service) EnqueueQuery(ctx context.Context, guildID string, query string
 		return EnqueueResult{}, ErrNoTracksFound
 	}
 
-	orderedTracks := loadResult.PlaybackOrder()
+	orderedTracks := loadResult.EnqueueOrder()
 	leadTrack, started, err := s.enqueueTracks(ctx, guildID, orderedTracks)
 	if err != nil {
 		return EnqueueResult{}, err

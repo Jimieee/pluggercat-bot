@@ -199,6 +199,50 @@ func TestEnqueueQueryHonorsSelectedTrackInPlaylist(t *testing.T) {
 	}
 }
 
+func TestEnqueueQueryAddsOnlyPrimaryTrackForSearchResults(t *testing.T) {
+	backend := &fakeAudioBackend{
+		loadResult: domainmusic.LoadResult{
+			Type: domainmusic.LoadResultTypeSearch,
+			Tracks: []domainmusic.Track{
+				{ID: "track-1", Title: "Track 1", Author: "Artist", Duration: 3 * time.Minute, Reference: "encoded-1"},
+				{ID: "track-2", Title: "Track 2", Author: "Artist", Duration: 4 * time.Minute, Reference: "encoded-2"},
+				{ID: "track-3", Title: "Track 3", Author: "Artist", Duration: 5 * time.Minute, Reference: "encoded-3"},
+			},
+		},
+	}
+
+	repo := memory.NewQueueRepository()
+	service := NewService(repo, backend)
+
+	result, err := service.EnqueueQuery(context.Background(), "guild-1", "foxy itown")
+	if err != nil {
+		t.Fatalf("enqueue query returned error: %v", err)
+	}
+	if !result.Started {
+		t.Fatalf("expected playback to start for the primary search result")
+	}
+	if result.LeadTrack.ID != "track-1" {
+		t.Fatalf("expected primary search result to play first, got %s", result.LeadTrack.ID)
+	}
+	if result.AddedCount != 1 {
+		t.Fatalf("expected only 1 track to be queued from search, got %d", result.AddedCount)
+	}
+
+	queue, found, err := repo.Get(context.Background(), "guild-1")
+	if err != nil {
+		t.Fatalf("load queue returned error: %v", err)
+	}
+	if !found {
+		t.Fatalf("expected queue to be saved")
+	}
+	if queue.Current == nil || queue.Current.ID != "track-1" {
+		t.Fatalf("expected track-1 to be playing, got %+v", queue.Current)
+	}
+	if len(queue.Upcoming) != 0 {
+		t.Fatalf("expected no extra tracks from search to be queued, got %+v", queue.Upcoming)
+	}
+}
+
 func TestSkipAdvancesQueue(t *testing.T) {
 	backend := &fakeAudioBackend{
 		searchResults: []domainmusic.Track{
